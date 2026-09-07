@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import ClassVar
 
 import numpy as np
@@ -12,6 +13,7 @@ from inspect_robots.conformance import (
     NumberSlot,
     OptionSlot,
     assert_embodiment_conformant,
+    check_device_slots,
     check_embodiment,
     device_slots,
     missing_runtime_requirements,
@@ -346,6 +348,79 @@ def test_non_string_runtime_requirement_entries_are_ignored() -> None:
         }
 
     assert missing_runtime_requirements(_Factory) == {"definitely_missing_xyz": "install valid"}
+
+
+def test_device_slots_no_declaration_has_no_findings(tmp_path: Path) -> None:
+    class _Factory:
+        pass
+
+    assert check_device_slots(_Factory, {"cam": "x"}, sysfs_net=tmp_path) == []
+    assert check_device_slots(None, {"cam": "x"}, sysfs_net=tmp_path) == []
+
+
+def test_device_slots_report_missing_path_and_can_in_declaration_order(tmp_path: Path) -> None:
+    sysfs_net = tmp_path / "net"
+    sysfs_net.mkdir()
+
+    class _Factory:
+        DEVICE_SLOTS: ClassVar[tuple[DeviceSlot, ...]] = (
+            DeviceSlot(arg="left_bus", kind="can", label="left arm CAN"),
+            DeviceSlot(arg="wrist_cam", kind="v4l2", label="wrist camera"),
+        )
+
+    issues = check_device_slots(
+        _Factory,
+        {"left_bus": "can_absent", "wrist_cam": str(tmp_path / "missing-cam")},
+        sysfs_net=sysfs_net,
+    )
+    assert [i.code for i in issues] == ["device", "device"]
+    assert all(i.severity == "error" for i in issues)
+    assert "left arm CAN" in issues[0].message and "can_absent" in issues[0].message
+    assert "present: none" in issues[0].message
+    assert "wrist camera" in issues[1].message and "missing-cam" in issues[1].message
+
+
+def test_device_slots_present_can_and_existing_path_pass(tmp_path: Path) -> None:
+    sysfs_net = tmp_path / "net"
+    (sysfs_net / "can0").mkdir(parents=True)
+    (sysfs_net / "can0" / "type").write_text("280", encoding="utf-8")
+    port = tmp_path / "ttyUSB0"
+    port.write_text("", encoding="utf-8")
+
+    class _Factory:
+        DEVICE_SLOTS: ClassVar[tuple[DeviceSlot, ...]] = (
+            DeviceSlot(arg="bus", kind="can", label="arm CAN"),
+            DeviceSlot(arg="serial", kind="serial", label="gripper serial"),
+        )
+
+    issues = check_device_slots(_Factory, {"bus": "can0", "serial": str(port)}, sysfs_net=sysfs_net)
+    assert issues == []
+
+
+def test_device_slots_present_can_interfaces_listed_on_miss(tmp_path: Path) -> None:
+    sysfs_net = tmp_path / "net"
+    (sysfs_net / "can0").mkdir(parents=True)
+    (sysfs_net / "can0" / "type").write_text("280", encoding="utf-8")
+
+    class _Factory:
+        DEVICE_SLOTS: ClassVar[tuple[DeviceSlot, ...]] = (
+            DeviceSlot(arg="bus", kind="can", label="arm CAN"),
+        )
+
+    issues = check_device_slots(_Factory, {"bus": "can_left"}, sysfs_net=sysfs_net)
+    assert len(issues) == 1
+    assert "present: can0" in issues[0].message
+
+
+def test_device_slots_unconfigured_and_disabled_values_are_skipped(tmp_path: Path) -> None:
+    class _Factory:
+        DEVICE_SLOTS: ClassVar[tuple[DeviceSlot, ...]] = (
+            DeviceSlot(arg="cam", kind="v4l2", label="camera"),
+            DeviceSlot(arg="right_bus", kind="can", label="right arm CAN"),
+        )
+
+    issues = check_device_slots(_Factory, {"right_bus": None}, sysfs_net=tmp_path)
+    assert issues == []
 
 
 def test_good_absolute_and_displacement_pass() -> None:
