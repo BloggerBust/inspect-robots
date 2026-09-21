@@ -241,7 +241,8 @@ def check_device_slots(
     """Check for configured device-slot values that no longer resolve on this host.
 
     For each ``DEVICE_SLOTS`` slot with a string value in ``configured``, return an
-    error finding when a camera or serial path does not exist or a CAN interface is not present.
+    error finding when a camera or serial path does not exist or cannot be checked, or a CAN
+    interface is not present.
 
     ``configured`` is the resolved ``[embodiment.args]``. A non-string or absent value is skipped by
     this check. CAN validation checks presence only.
@@ -269,14 +270,27 @@ def check_device_slots(
                         f"present: {present}",
                     )
                 )
-        elif not Path(value).exists():
-            issues.append(
-                ConformanceIssue(
-                    "error",
-                    "device",
-                    f"{slot.label} ({slot.arg}): {slot.kind} path {value!r} does not exist",
+        else:
+            try:
+                exists = Path(value).exists()
+            except OSError as exc:
+                issues.append(
+                    ConformanceIssue(
+                        "error",
+                        "device",
+                        f"{slot.label} ({slot.arg}): {slot.kind} path {value!r} could not be "
+                        f"checked: {exc.strerror or exc}",
+                    )
                 )
-            )
+                continue
+            if not exists:
+                issues.append(
+                    ConformanceIssue(
+                        "error",
+                        "device",
+                        f"{slot.label} ({slot.arg}): {slot.kind} path {value!r} does not exist",
+                    )
+                )
     return issues
 
 

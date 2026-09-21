@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import errno
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import numpy as np
 import pytest
@@ -421,6 +422,36 @@ def test_device_slots_unconfigured_and_disabled_values_are_skipped(tmp_path: Pat
 
     issues = check_device_slots(_Factory, {"right_bus": None}, sysfs_net=tmp_path)
     assert issues == []
+
+
+def test_device_slots_report_unreadable_path_and_keep_checking(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    locked = tmp_path / "locked" / "cam0"
+    real_exists = Path.exists
+
+    def failing_exists(self: Path, *args: Any, **kwargs: Any) -> bool:
+        if self == locked:
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        return real_exists(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "exists", failing_exists)
+
+    class _Factory:
+        DEVICE_SLOTS: ClassVar[tuple[DeviceSlot, ...]] = (
+            DeviceSlot(arg="wrist_cam", kind="v4l2", label="wrist camera"),
+            DeviceSlot(arg="gripper", kind="serial", label="gripper serial"),
+        )
+
+    issues = check_device_slots(
+        _Factory,
+        {"wrist_cam": str(locked), "gripper": str(tmp_path / "no-serial")},
+        sysfs_net=tmp_path,
+    )
+    assert [i.code for i in issues] == ["device", "device"]
+    assert "wrist camera" in issues[0].message
+    assert "could not be checked: Permission denied" in issues[0].message
+    assert "gripper serial" in issues[1].message and "does not exist" in issues[1].message
 
 
 def test_good_absolute_and_displacement_pass() -> None:

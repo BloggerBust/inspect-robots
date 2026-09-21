@@ -35,7 +35,9 @@ also:
   value by the slot kind, checking presence the same way `setup` does,
   by:
   - `v4l2` and `serial`: the configured value is an absolute device
-    path, valid when that path exists;
+    path, valid when that path exists; if `Path.exists()` raises `OSError`,
+    it is reported as an error finding for that slot and the remaining slots
+    are still checked;
   - `can`: the configured value is a SocketCAN interface name, valid
     when that name is present among the sysfs CAN interfaces
     (`_setup._scan_can`), and the message lists the interfaces that

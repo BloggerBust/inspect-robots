@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import errno
 import json
 import os
 import shlex
@@ -7721,6 +7722,38 @@ def test_doctor_passes_when_configured_device_paths_exist(
     out = capsys.readouterr().out
     assert rc == 0
     assert "[error] device" not in out
+
+
+def test_doctor_reports_unreadable_device_path_and_continues(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    locked = tmp_path / "locked" / "cam0"
+    real_exists = Path.exists
+
+    def failing_exists(self: Path, *args: Any, **kwargs: Any) -> bool:
+        if self == locked:
+            raise PermissionError(errno.EACCES, "Permission denied", str(self))
+        return real_exists(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "exists", failing_exists)
+    _register_device_embodiment("device-doctor-unreadable")
+    rc = main(
+        [
+            "doctor",
+            "--embodiment",
+            "device-doctor-unreadable",
+            "-E",
+            f"wrist_cam={locked}",
+            "-E",
+            f"gripper={tmp_path / 'no-serial'}",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "[error] device: wrist camera (wrist_cam): v4l2 path" in out
+    assert "could not be checked: Permission denied" in out
+    assert "[error] device: gripper serial (gripper): serial path" in out
+    assert out.index("device: gripper serial") < out.index("conformant")
 
 
 def test_doctor_ignores_config_args_for_a_different_embodiment(
